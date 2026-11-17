@@ -88,11 +88,13 @@ router = APIRouter()
 
 
 @router.get("/health", response_model=HealthResponse)
+@router.get("/health/", response_model=HealthResponse, include_in_schema=False)
 def health():
     return HealthResponse(status="ok", service="FACEAI STUDIO API", version="2.0.0")
 
 
 @router.get("/models/status", response_model=ModelStatusResponse)
+@router.get("/models/status/", response_model=ModelStatusResponse, include_in_schema=False)
 def model_status():
     df_st = deepfake_status()
     sk_st = sketch_status()
@@ -105,6 +107,7 @@ def model_status():
 
 
 @router.post("/image/validate", response_model=ValidationResult)
+@router.post("/image/validate/", response_model=ValidationResult, include_in_schema=False)
 async def validate_image_endpoint(
     file: Optional[UploadFile] = File(None),
     image: Optional[UploadFile] = File(None),
@@ -145,7 +148,9 @@ async def validate_image_endpoint(
 
 
 @router.post("/predict", response_model=DeepfakeResult)
+@router.post("/predict/", response_model=DeepfakeResult, include_in_schema=False)
 @router.post("/deepfake/analyze", response_model=DeepfakeResult)
+@router.post("/deepfake/analyze/", response_model=DeepfakeResult, include_in_schema=False)
 async def deepfake_analyze(
     file: Optional[UploadFile] = File(None),
     image: Optional[UploadFile] = File(None),
@@ -163,6 +168,7 @@ async def deepfake_analyze(
 
 
 @router.post("/sketch/generate")
+@router.post("/sketch/generate/", include_in_schema=False)
 async def sketch_generate(
     file: Optional[UploadFile] = File(None),
     image: Optional[UploadFile] = File(None),
@@ -187,25 +193,58 @@ async def sketch_generate(
 
 
 @router.post("/text-to-face/generate")
-async def text_to_face_generate(
-    prompt: str = Form(...),
-    model_id: str = Form("runwayml/stable-diffusion-v1-5"),
-    negative_prompt: Optional[str] = Form(None),
-    steps: int = Form(25),
-    guidance: float = Form(7.0),
-    seed: Optional[int] = Form(None),
-    width: int = Form(512),
-    height: int = Form(512),
-):
-    prompt = prompt.strip()
+@router.post("/text-to-face/generate/", include_in_schema=False)
+async def text_to_face_generate(request: Request):
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        prompt = str(body.get("prompt", "")).strip()
+        model_id = str(body.get("model_id", "runwayml/stable-diffusion-v1-5"))
+        negative_prompt = body.get("negative_prompt")
+        try:
+            steps = int(body.get("steps", 25))
+        except (ValueError, TypeError):
+            steps = 25
+        try:
+            guidance = float(body.get("guidance", 7.0))
+        except (ValueError, TypeError):
+            guidance = 7.0
+        seed = body.get("seed")
+        try:
+            width = int(body.get("width", 512))
+            height = int(body.get("height", 512))
+        except (ValueError, TypeError):
+            width, height = 512, 512
+    else:
+        form = await request.form()
+        prompt = str(form.get("prompt", "")).strip()
+        model_id = str(form.get("model_id", "runwayml/stable-diffusion-v1-5"))
+        negative_prompt = form.get("negative_prompt")
+        try:
+            steps = int(form.get("steps", 25))
+        except (ValueError, TypeError):
+            steps = 25
+        try:
+            guidance = float(form.get("guidance", 7.0))
+        except (ValueError, TypeError):
+            guidance = 7.0
+        raw_seed = form.get("seed")
+        seed = int(raw_seed) if (raw_seed and str(raw_seed).isdigit()) else None
+        try:
+            width = int(form.get("width", 512))
+            height = int(form.get("height", 512))
+        except (ValueError, TypeError):
+            width, height = 512, 512
+
     if len(prompt) < 8:
         raise HTTPException(status_code=422, detail="Enter a more detailed fictional face description (minimum 8 characters).")
     if len(prompt) > 1000:
         raise HTTPException(status_code=422, detail="Prompt must be 1,000 characters or fewer.")
-    if not (10 <= steps <= 50):
-        raise HTTPException(status_code=422, detail="Steps must be between 10 and 50.")
-    if not (1.0 <= guidance <= 15.0):
-        raise HTTPException(status_code=422, detail="Guidance must be between 1.0 and 15.0.")
+    steps = max(10, min(50, steps))
+    guidance = max(1.0, min(15.0, guidance))
 
     try:
         output, device, label = text2face_generate_fn(

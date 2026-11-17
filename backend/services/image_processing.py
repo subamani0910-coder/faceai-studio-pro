@@ -13,10 +13,6 @@ logger = logging.getLogger("faceai.image_processing")
 
 MAX_BYTES = 25 * 1024 * 1024  # 25 MB
 
-ALLOWED_FORMATS = {
-    "JPEG", "JPG", "PNG", "WEBP", "BMP", "GIF", "TIFF", "TIF", "MPO", "PPM", "DIB", "ICO"
-}
-
 ALLOWED_TYPES = {
     "image/jpeg", "image/jpg", "image/png", "image/webp", "image/bmp",
     "image/gif", "image/tiff", "image/pjpeg", "image/x-png", "image/jfif",
@@ -36,14 +32,13 @@ def load_image_safely(file_bytes: bytes) -> Image.Image:
     
     # Clean conversion to RGB
     if img.mode in ("RGBA", "LA"):
-        # Alpha blend over clean white/neutral background
+        # Alpha blend over clean white background
         bg = Image.new("RGB", img.size, (255, 255, 255))
         bg.paste(img, mask=img.split()[-1])
         return bg
     elif img.mode != "RGB":
         return img.convert("RGB")
     
-
     return img
 
 
@@ -53,7 +48,7 @@ def validate_image(
 ) -> Dict:
     """Validate raw image bytes and return a dict with metadata + errors list.
 
-    Accepts all mainstream image formats (JPEG, PNG, WEBP, BMP, etc.).
+    Accepts any decodable image format (JPEG, PNG, WEBP, BMP, etc.).
     """
     errors: list[str] = []
     result: Dict = {
@@ -82,13 +77,8 @@ def validate_image(
         result["width"] = raw_img.width
         result["height"] = raw_img.height
 
-        if raw_img.width < 16 or raw_img.height < 16:
-            errors.append("Image dimensions are too small (minimum 16×16 pixels).")
-            result["valid"] = False
-            return result
-
-        if fmt not in ALLOWED_FORMATS:
-            errors.append(f"Image format '{fmt}' is not supported. Please upload JPEG, PNG, WEBP, or BMP.")
+        if raw_img.width < 8 or raw_img.height < 8:
+            errors.append("Image dimensions are too small (minimum 8×8 pixels).")
             result["valid"] = False
             return result
 

@@ -1,7 +1,12 @@
 {
+  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/(predict|deepfake/.*|sketch/.*|text-to-face/.*|health|models/.*|image/.*)",
       "destination": "/api/index.py"
     },
     {

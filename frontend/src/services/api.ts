@@ -1,13 +1,23 @@
 // API Client for FACEAI STUDIO Backend
-// Uses relative /api path (proxied by Vite or rewritten by Vercel) or explicit VITE_API_URL
-const RAW_URL = import.meta.env.VITE_API_URL || '';
-const API_BASE = RAW_URL.replace(/\/+$/, '');
+// Uses relative /api path (proxied by Vite or rewritten by Vercel) with intelligent local port discovery
+let RAW_URL = import.meta.env.VITE_API_URL || '';
+let API_BASE = RAW_URL.replace(/\/+$/, '');
+
+export function getApiBase(): string {
+  return API_BASE;
+}
+
+export function setApiBase(url: string) {
+  API_BASE = url.replace(/\/+$/, '');
+}
 
 export interface FaceBBox {
   x: number;
   y: number;
   w: number;
   h: number;
+  confidence?: number;
+  landmarks?: Record<string, [number, number]>;
 }
 
 export interface ModelStatusItem {
@@ -64,10 +74,25 @@ export interface TextToFaceResult {
 export async function checkApiHealth(): Promise<boolean> {
   try {
     const res = await fetch(`${API_BASE}/api/health`, { method: 'GET' });
-    return res.ok;
+    if (res.ok) return true;
   } catch {
-    return false;
+    // Relative request failed; check fallback below
   }
+
+  // Local auto-discovery: if running on localhost and relative fetch failed, try direct FastAPI port 8000
+  if (!API_BASE && typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    try {
+      const fallbackRes = await fetch(`http://127.0.0.1:8000/api/health`, { method: 'GET' });
+      if (fallbackRes.ok) {
+        API_BASE = 'http://127.0.0.1:8000';
+        return true;
+      }
+    } catch {
+      // Direct connection also offline
+    }
+  }
+
+  return false;
 }
 
 export async function getModelStatus(): Promise<ModelStatusResponse | null> {
@@ -104,6 +129,22 @@ export async function analyzeDeepfake(file: File): Promise<DeepfakeAnalysisResul
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || 'Deepfake analysis failed on backend.');
+  }
+  return await res.json();
+}
+
+/**
+ * Universal predict function matching the standard API endpoint:
+ * fetch(`${API_URL}/predict`, { method: "POST", body: formData })
+ */
+export async function predict(formData: FormData): Promise<DeepfakeAnalysisResult> {
+  const res = await fetch(`${API_BASE}/predict`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Predict endpoint request failed.');
   }
   return await res.json();
 }

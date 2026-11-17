@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from backend.services.face_detection import detect_faces
+from backend.services.face_detection import crop_face, detect_faces
 from backend.services.image_processing import image_to_base64
 from backend.utils.helpers import MODELS_DIR, ROOT_DIR, timed
 
@@ -115,8 +115,14 @@ def _cam_to_base64(cam: np.ndarray) -> str:
 
 
 def _analyze_numpy(image: Image.Image, weights: Dict[str, np.ndarray]) -> tuple[str, float, Optional[str]]:
-    img_resized = image.resize((224, 224), Image.BILINEAR)
-    x_in = (np.array(img_resized, dtype=np.float32) / 255.0).transpose(2, 0, 1)
+    img_rgb = image.convert("RGB")
+    img_resized = img_rgb.resize((224, 224), Image.BILINEAR)
+    arr = np.array(img_resized, dtype=np.float32)
+    if arr.ndim == 2:
+        arr = np.stack([arr] * 3, axis=-1)
+    elif arr.shape[-1] > 3:
+        arr = arr[:, :, :3]
+    x_in = (arr / 255.0).transpose(2, 0, 1)
 
     # Spatial Branch
     s = _conv2d_np(x_in, weights["spatial.0.weight"], weights["spatial.0.bias"], 1)
@@ -181,15 +187,20 @@ def analyze(image: Image.Image) -> Dict:
     faces = detect_faces(image)
     face_bbox = None
     face_detected = len(faces) > 0
+    target_face = image
     if face_detected:
         face_bbox = max(faces, key=lambda f: f["w"] * f["h"])
+        try:
+            target_face = crop_face(image, face_bbox, padding=0.15)
+        except Exception:
+            target_face = image
 
     image_info = {"width": image.width, "height": image.height, "format": image.format}
 
     # 1. Prefer lightweight NumPy weights
     weights = _get_npz_weights()
     if weights is not None:
-        label, confidence, grad_cam_b64 = _analyze_numpy(image, weights)
+        label, confidence, grad_cam_b64 = _analyze_numpy(target_face, weights)
         return {
             "status": "ok",
             "prediction": label,

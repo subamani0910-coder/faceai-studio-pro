@@ -35,6 +35,8 @@ class FaceBBox(BaseModel):
     y: int
     w: int
     h: int
+    confidence: Optional[float] = None
+    landmarks: Optional[Dict[str, Any]] = None
 
 
 class ImageInfo(BaseModel):

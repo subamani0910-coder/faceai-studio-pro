@@ -39,12 +39,13 @@ export const DeepfakePage: React.FC = () => {
     setResult(null);
     setValidation(null);
 
-    if (!['image/jpeg', 'image/png'].includes(selectedFile.type)) {
-      setError('Supported formats: JPG, JPEG, PNG only.');
+    const isImage = selectedFile.type.startsWith('image/') || /\.(jpe?g|png|webp|bmp|jfif|tiff?)$/i.test(selectedFile.name);
+    if (!isImage) {
+      setError('Supported formats: JPG, PNG, WEBP, or BMP.');
       return;
     }
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      setError('File size exceeds the 10 MB limit.');
+    if (selectedFile.size > 25 * 1024 * 1024) {
+      setError('File size exceeds the 25 MB limit.');
       return;
     }
 
@@ -130,7 +131,7 @@ export const DeepfakePage: React.FC = () => {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/png,image/jpeg"
+              accept="image/*"
               onChange={(e) => handleFileChange(e.target.files?.[0])}
               className="hidden"
             />

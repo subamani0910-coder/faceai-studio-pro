@@ -31,12 +31,13 @@ export const SketchPage: React.FC = () => {
     setResult(null);
     setValidation(null);
 
-    if (!['image/jpeg', 'image/png'].includes(selectedFile.type)) {
-      setError('Upload a valid JPG or PNG portrait.');
+    const isImage = selectedFile.type.startsWith('image/') || /\.(jpe?g|png|webp|bmp|jfif|tiff?)$/i.test(selectedFile.name);
+    if (!isImage) {
+      setError('Upload a valid JPG, PNG, WEBP, or BMP portrait.');
       return;
     }
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      setError('Image exceeds maximum 10 MB limit.');
+    if (selectedFile.size > 25 * 1024 * 1024) {
+      setError('Image exceeds maximum 25 MB limit.');
       return;
     }
 

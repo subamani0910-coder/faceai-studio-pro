@@ -328,7 +328,7 @@ def generate(
     height: int = 512,
 ) -> tuple[Image.Image, str, str]:
     """Generate a high-quality fictional portrait with automatic fallback."""
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if (torch and torch.cuda.is_available()) else "cpu"
 
     # Attempt Stable Diffusion pipeline first if GPU or fast environment
     try:
