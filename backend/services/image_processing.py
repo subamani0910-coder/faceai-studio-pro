@@ -7,12 +7,44 @@ import io
 import logging
 from typing import Dict, Optional, Tuple
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 logger = logging.getLogger("faceai.image_processing")
 
-MAX_BYTES = 10 * 1024 * 1024  # 10 MB
-ALLOWED_TYPES = {"image/jpeg", "image/png"}
+MAX_BYTES = 25 * 1024 * 1024  # 25 MB
+
+ALLOWED_FORMATS = {
+    "JPEG", "JPG", "PNG", "WEBP", "BMP", "GIF", "TIFF", "TIF", "MPO", "PPM", "DIB", "ICO"
+}
+
+ALLOWED_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp", "image/bmp",
+    "image/gif", "image/tiff", "image/pjpeg", "image/x-png", "image/jfif",
+    "application/octet-stream"
+}
+
+
+def load_image_safely(file_bytes: bytes) -> Image.Image:
+    """Load and normalize any image format cleanly into an RGB Image with EXIF orientation corrected."""
+    img = Image.open(io.BytesIO(file_bytes))
+    
+    # Correct EXIF rotation for smartphone photos
+    try:
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+    
+    # Clean conversion to RGB
+    if img.mode in ("RGBA", "LA"):
+        # Alpha blend over clean white/neutral background
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[-1])
+        return bg
+    elif img.mode != "RGB":
+        return img.convert("RGB")
+    
+
+    return img
 
 
 def validate_image(
@@ -21,8 +53,7 @@ def validate_image(
 ) -> Dict:
     """Validate raw image bytes and return a dict with metadata + errors list.
 
-    Keys: ``valid``, ``width``, ``height``, ``format``, ``file_size_bytes``,
-    ``errors``.
+    Accepts all mainstream image formats (JPEG, PNG, WEBP, BMP, etc.).
     """
     errors: list[str] = []
     result: Dict = {
@@ -40,42 +71,37 @@ def validate_image(
         return result
 
     if len(file_bytes) > MAX_BYTES:
-        errors.append(f"File exceeds the maximum allowed size of {MAX_BYTES // (1024 * 1024)} MB.")
-        result["valid"] = False
-        return result
-
-    if content_type and content_type not in ALLOWED_TYPES:
-        errors.append(f"Unsupported content type '{content_type}'. Allowed: JPEG, PNG.")
+        errors.append(f"File exceeds maximum allowed size of {MAX_BYTES // (1024 * 1024)} MB.")
         result["valid"] = False
         return result
 
     try:
-        image = Image.open(io.BytesIO(file_bytes))
-        image.verify()  # verify but don't fully load
-        # Re-open for actual metadata (verify() leaves the file in an unusable state)
-        image = Image.open(io.BytesIO(file_bytes))
-        result["width"] = image.width
-        result["height"] = image.height
-        result["format"] = image.format
+        raw_img = Image.open(io.BytesIO(file_bytes))
+        fmt = (raw_img.format or "JPEG").upper()
+        result["format"] = fmt
+        result["width"] = raw_img.width
+        result["height"] = raw_img.height
+
+        if raw_img.width < 16 or raw_img.height < 16:
+            errors.append("Image dimensions are too small (minimum 16×16 pixels).")
+            result["valid"] = False
+            return result
+
+        if fmt not in ALLOWED_FORMATS:
+            errors.append(f"Image format '{fmt}' is not supported. Please upload JPEG, PNG, WEBP, or BMP.")
+            result["valid"] = False
+            return result
+
     except (UnidentifiedImageError, Exception) as exc:
-        errors.append(f"Not a valid image file: {type(exc).__name__}")
+        errors.append(f"Could not decode image file: {type(exc).__name__}")
         result["valid"] = False
         return result
-
-    if image.width < 64 or image.height < 64:
-        errors.append("Image is too small. Minimum size is 64×64 pixels.")
-        result["valid"] = False
-
-    fmt_lower = (image.format or "").upper()
-    if fmt_lower not in ("JPEG", "PNG", "MPO"):
-        errors.append(f"Unsupported image format '{fmt_lower}'. Allowed: JPEG, PNG.")
-        result["valid"] = False
 
     return result
 
 
 def resize_for_model(image: Image.Image, target_size: Tuple[int, int] = (224, 224)) -> Image.Image:
-    """Resize an image to the target dimensions using high-quality Lanczos resampling."""
+    """Resize an image to target dimensions using high-quality Lanczos resampling."""
     return image.convert("RGB").resize(target_size, Image.LANCZOS)
 
 

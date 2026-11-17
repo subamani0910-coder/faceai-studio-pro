@@ -1,17 +1,22 @@
-from pathlib import Path
+"""FastAPI backend application for FACEAI STUDIO.
+
+Exposes REST endpoints for:
+1. Module 01: Deepfake Detection (Spatial CNN + Frequency 2D-FFT Feature Fusion + Grad-CAM)
+2. Module 02: Realistic Face Sketch Generation (Landmark-Preserved Stylization)
+3. Module 03: Text-to-Face Synthesis (Synthetic Fictional Portrait Generator + Watermark)
+4. Model health, diagnostics, and image format validation
+"""
+
+from __future__ import annotations
+
 import io
-import sys
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Request
+from fastapi import FastAPI, APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
-from PIL import Image, UnidentifiedImageError
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from fastapi.responses import JSONResponse, StreamingResponse
+from PIL import Image
 
 from backend.schemas.responses import (
     HealthResponse,
@@ -25,7 +30,12 @@ from backend.services.deepfake_service import analyze as deepfake_analyze_fn, ge
 from backend.services.sketch_service import generate as sketch_generate_fn, get_status as sketch_status
 from backend.services.text2face_service import generate as text2face_generate_fn, get_status as text2face_status
 from backend.services.face_detection import detect_faces
-from backend.services.image_processing import validate_image, MAX_BYTES, ALLOWED_TYPES
+from backend.services.image_processing import (
+    ALLOWED_TYPES,
+    MAX_BYTES,
+    load_image_safely,
+    validate_image,
+)
 from backend.utils.helpers import request_id
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -66,18 +76,23 @@ async def read_and_validate_image(file: UploadFile) -> tuple[Image.Image, bytes]
         raise HTTPException(status_code=422, detail="; ".join(val["errors"]))
     
     try:
-        img = Image.open(io.BytesIO(raw)).convert("RGB")
+        img = load_image_safely(raw)
         return img, raw
-    except UnidentifiedImageError:
-        raise HTTPException(status_code=415, detail="The uploaded file is not a valid image.")
+    except Exception as exc:
+        logger.error("Image decode error: %s", exc)
+        raise HTTPException(status_code=415, detail="The uploaded file is not a decodable image.")
 
 
-@app.get("/api/health", response_model=HealthResponse)
+# Create router to support both /api/... and direct /... paths
+router = APIRouter()
+
+
+@router.get("/health", response_model=HealthResponse)
 def health():
     return HealthResponse(status="ok", service="FACEAI STUDIO API", version="2.0.0")
 
 
-@app.get("/api/models/status", response_model=ModelStatusResponse)
+@router.get("/models/status", response_model=ModelStatusResponse)
 def model_status():
     df_st = deepfake_status()
     sk_st = sketch_status()
@@ -89,10 +104,16 @@ def model_status():
     )
 
 
-@app.post("/api/image/validate", response_model=ValidationResult)
-async def validate_image_endpoint(file: UploadFile = File(...)):
-    raw = await file.read()
-    val = validate_image(raw, file.content_type)
+@router.post("/image/validate", response_model=ValidationResult)
+async def validate_image_endpoint(
+    file: Optional[UploadFile] = File(None),
+    image: Optional[UploadFile] = File(None),
+):
+    upload = file or image
+    if upload is None:
+        return ValidationResult(valid=False, errors=["No image file uploaded. Use field 'file' or 'image'."])
+    raw = await upload.read()
+    val = validate_image(raw, upload.content_type)
     if not val["valid"]:
         return ValidationResult(
             valid=False,
@@ -101,12 +122,12 @@ async def validate_image_endpoint(file: UploadFile = File(...)):
         )
     
     try:
-        image = Image.open(io.BytesIO(raw)).convert("RGB")
-        faces = detect_faces(image)
+        img = load_image_safely(raw)
+        faces = detect_faces(img)
         return ValidationResult(
             valid=True,
-            width=image.width,
-            height=image.height,
+            width=img.width,
+            height=img.height,
             format=val.get("format"),
             file_size_bytes=len(raw),
             face_detected=len(faces) > 0,
@@ -123,22 +144,35 @@ async def validate_image_endpoint(file: UploadFile = File(...)):
         )
 
 
-@app.post("/api/deepfake/analyze", response_model=DeepfakeResult)
-async def deepfake_analyze(file: UploadFile = File(...)):
-    image, _ = await read_and_validate_image(file)
+@router.post("/predict", response_model=DeepfakeResult)
+@router.post("/deepfake/analyze", response_model=DeepfakeResult)
+async def deepfake_analyze(
+    file: Optional[UploadFile] = File(None),
+    image: Optional[UploadFile] = File(None),
+):
+    upload = file or image
+    if upload is None:
+        raise HTTPException(status_code=422, detail="No image provided. Please send a file under key 'file' or 'image'.")
+    img, _ = await read_and_validate_image(upload)
     try:
-        result = deepfake_analyze_fn(image)
+        result = deepfake_analyze_fn(img)
         return DeepfakeResult(**result)
     except Exception as exc:
         logger.error("Deepfake detection error: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Detection failed: {type(exc).__name__}")
 
 
-@app.post("/api/sketch/generate")
-async def sketch_generate(file: UploadFile = File(...)):
-    image, _ = await read_and_validate_image(file)
+@router.post("/sketch/generate")
+async def sketch_generate(
+    file: Optional[UploadFile] = File(None),
+    image: Optional[UploadFile] = File(None),
+):
+    upload = file or image
+    if upload is None:
+        raise HTTPException(status_code=422, detail="No image provided. Please send a file under key 'file' or 'image'.")
+    img, _ = await read_and_validate_image(upload)
     try:
-        output, mode = sketch_generate_fn(image)
+        output, mode = sketch_generate_fn(img)
         buffer = io.BytesIO()
         output.save(buffer, format="PNG")
         buffer.seek(0)
@@ -152,7 +186,7 @@ async def sketch_generate(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Sketch generation failed: {type(exc).__name__}")
 
 
-@app.post("/api/text-to-face/generate")
+@router.post("/text-to-face/generate")
 async def text_to_face_generate(
     prompt: str = Form(...),
     model_id: str = Form("runwayml/stable-diffusion-v1-5"),
@@ -202,3 +236,8 @@ async def text_to_face_generate(
             status_code=503,
             detail=f"Generation unavailable: {type(exc).__name__}. Check model access, internet, and memory.",
         )
+
+
+# Mount router for both `/api/...` and `/...`
+app.include_router(router, prefix="")
+app.include_router(router, prefix="/api")

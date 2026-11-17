@@ -1,6 +1,7 @@
 // API Client for FACEAI STUDIO Backend
-// Uses relative /api path (proxied by Vite) or explicit VITE_API_URL
-const API_BASE = import.meta.env.VITE_API_URL || '';
+// Uses relative /api path (proxied by Vite or rewritten by Vercel) or explicit VITE_API_URL
+const RAW_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE = RAW_URL.replace(/\/+$/, '');
 
 export interface FaceBBox {
   x: number;
